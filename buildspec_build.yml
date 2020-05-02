@@ -1,0 +1,36 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Start build application. 
+      - echo Switching to the application directory
+      - cd $CODEBUILD_SRC_DIR
+      - APP_ARTIFACT_NAME="spring-boot-angular-ecommerce-0.0.1-SNAPSHOT.jar"
+      - App_Name=`aws ssm get-parameter --name "devsecops_App_Name" | jq .Parameter.Value | sed 's/\"//g'`
+      - APP_BUILD_INFO_KEY="${App_Name}_LastAppBuildInfo"
+  build:
+    commands:
+      - echo Build started on `date`
+      - echo Building Application...
+      - cp ./settings.xml /root/.m2/settings.xml 
+      - mvn -Dmaven.test.skip=true clean package
+  post_build:
+    commands:
+      - mvn test
+      - echo Build completed on `date`
+      - artifact_md5=`md5sum target/${APP_ARTIFACT_NAME} | cut -d ' ' -f 1`
+      - echo Artifact md5 $artifact_md5
+      - echo $artifact_md5 > target/md5sum
+      - build_id=`echo ${CODEBUILD_BUILD_ID} | cut -d ':' -f 2`
+      - aws ssm put-parameter --name $APP_BUILD_INFO_KEY --type "StringList" --value "${build_id},${APP_ARTIFACT_NAME},${artifact_md5}" --overwrite
+artifacts:
+  base-directory: $CODEBUILD_SRC_DIR/target
+  files:
+    - "$APP_ARTIFACT_NAME"
+    - md5sum
+reports:
+  junit-report-group: #surefire junit reports
+    files:
+      - '**/*'
+    base-directory: 'target/surefire-reports'
