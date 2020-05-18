@@ -1,0 +1,42 @@
+version: 0.2
+
+phases:
+  pre_build:
+    commands:
+      - echo Switching to the application directory
+      - cd $CODEBUILD_SRC_DIR
+      - echo Set image and repo info
+      - App_Name=`aws ssm get-parameter --name "devsecops_App_Name" --query "Parameter.Value" --output text`
+      - DEVELOP_IMAGE_REPO_NAME=`aws ssm get-parameter --name "${App_Name}_Develop_Image_Repo_Name" --query "Parameter.Value" --output text`
+      - IMAGE_TAG=`aws ssm get-parameter --name "${App_Name}_LastCommitId" --query "Parameter.Value" --output text`
+      - echo Get account id
+      - AWS_ACCOUNT_ID=`aws sts get-caller-identity --query 'Account' --region $AWS_DEFAULT_REGION --output text`
+      - echo Set app artifact path
+      - app_last_build_info=`aws ssm get-parameter --name "${App_Name}_LastAppBuildInfo" --query "Parameter.Value" --output text`
+      - app_build_id=`echo $app_last_build_info | cut -d ',' -f 1`
+      - app_artifact_name=`echo $app_last_build_info | cut -d ',' -f 2`
+      - app_artifact_md5=`echo $app_last_build_info | cut -d ',' -f 3`
+      - echo Logging in to Amazon ECR...
+      - $(aws ecr get-login --no-include-email --region $AWS_DEFAULT_REGION)
+  build:
+    commands:
+      - echo Build started on `date`
+      - mkdir target
+      - app_artifact_s3_object_path="s3://${App_Name}-artifacts/app-artifacts-snapshot/${app_build_id}/${App_Name}-build-app"
+      - aws s3 sync ${app_artifact_s3_object_path} ./target --region $AWS_DEFAULT_REGION
+      - echo Check app artifact md5
+      - md5_vaule=`md5sum target/$app_artifact_name | cut -d ' ' -f 1`
+      - |
+        if [ "$md5_vaule" != "$app_artifact_md5" ]; then
+          echo "Md5 check Failed, Please check."
+          exit 1
+        fi
+      - echo Building the Docker image...
+      - docker build -t $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/$DEVELOP_IMAGE_REPO_NAME:$IMAGE_TAG .
+      - docker tag $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/$DEVELOP_IMAGE_REPO_NAME:$IMAGE_TAG $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/$DEVELOP_IMAGE_REPO_NAME:latest
+  post_build:
+    commands:
+      - echo Build completed on `date`
+      - echo Pushing the Docker image...
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/$DEVELOP_IMAGE_REPO_NAME:$IMAGE_TAG
+      - docker push $AWS_ACCOUNT_ID.dkr.ecr.$AWS_DEFAULT_REGION.amazonaws.com.cn/$DEVELOP_IMAGE_REPO_NAME:latest
